@@ -1,4 +1,4 @@
-import ListUtils IntUtils
+import BoolUtils ListUtils IntUtils
 
 (***************************************************)
 (*               Associated library                *)
@@ -49,35 +49,16 @@ let unknown_candidate_err_code       = Int32 -12
 let candidate_already_owner_err_code = Int32 -13
 
 let transaction_inc = Uint32 1
-let empty_sigs = Emp ByStr20 Bool
+let empty_sigs = Nil {ByStr20}
 
 let signature_added = Int32 3
 let transaction_executed = Int32 2
 
-(* Make map of owners *)
-let mk_owners_map =
-  fun (initial_owners : List ByStr20) =>
-    let init = Emp ByStr20 Bool in
-    let iter =
-      fun (acc : Map ByStr20 Bool) =>
-      fun (cur_owner : ByStr20) =>
-        let mem = builtin get acc cur_owner in
-        match mem with
-        | Some True =>
-          (* owner already added *)
-          acc
-        | _ =>
-          (* owner not yet added, or removed *)
-          let t = True in
-          builtin put acc cur_owner t
-        end in
-    let folder = @list_foldl ByStr20 (Map ByStr20 Bool) in
-    folder iter init initial_owners
-
 (* Check that the number of distinct owners is greater than 0 *)
 let check_contract_validity =
-  fun (owners : Map ByStr20 Bool) =>
-    let no_of_owners = builtin size owners in
+  fun (owners : List ByStr20) =>
+    let size = @list_length ByStr20 in
+    let no_of_owners = size owners in
     let zero = Uint32 0 in
     builtin lt zero no_of_owners
 
@@ -104,14 +85,14 @@ let transaction_msg_as_list =
 (* list_mem for owners *)
 let address_mem =
   fun (sender : ByStr20) =>
-  fun (mem_map : Map ByStr20 Bool) =>
-    let mem = builtin get mem_map sender in
-    match mem with
-    | None       => False
-    | Some False => False
-    | Some True  => True
-    end
-
+  fun (mem_list : List ByStr20) =>
+    let mem_fn = @list_mem ByStr20 in
+    let pred =
+      fun (m : ByStr20) =>
+      fun (n : ByStr20) =>
+        builtin eq m n in
+    let mem = mem_fn pred sender mem_list in
+    mem
 
 (***************************************************)
 (*             The contract definition             *)
@@ -153,20 +134,21 @@ field contract_valid   : Bool = False
 (* adr -> False is not used *)
 (* The initial owners will be added as owners when funds are *)
 (* initially added to the contract. *)
-field owners           : Map ByStr20 Bool = Emp ByStr20 Bool
+(* field owners           : Map ByStr20 Bool = Emp ByStr20 Bool *)
+field owners : List ByStr20 = Nil {ByStr20}
 
 field transactionCount : Uint32 = Uint32 0
 
 (* Collected signatures for transactions *)
-field signatures       : Map Uint32 (Map ByStr20 Bool) =
-                           Emp Uint32 (Map ByStr20 Bool)
+field signatures       : Map Uint32 (List ByStr20) =
+                           Emp Uint32 (List ByStr20)
 (* Transactions *) 
 field transactions     : Map Uint32 (Pair ByStr20 Uint128) =
                            Emp Uint32 (Pair ByStr20 Uint128)
 
 (* Collected signatures for new owners *)
-field owner_signatures : Map ByStr20 (Map ByStr20 Bool) =
-                           Emp ByStr20 (Map ByStr20 Bool)
+field owner_signatures : Map ByStr20 (List ByStr20) =
+                           Emp ByStr20 (List ByStr20)
 
 
 (* Submit a transaction for future signoff *)
@@ -245,7 +227,7 @@ transition SignTransaction (transactionId : Uint32)
         | False =>
           (* Signature is valid. Add to collected signatures *)
           t = True;
-          new_sigs = builtin put sigs _sender t;
+          new_sigs = Cons {ByStr20} _sender sigs;
           new_signatures = builtin put sigs_tmp transactionId new_sigs;
           signatures := new_signatures
         end
@@ -288,7 +270,9 @@ transition ExecuteTransaction (transactionId : Uint32, tag : String)
           event e
         | Some sigs =>
           (* Check for sufficient number of signatures *)
-          no_of_sigs = builtin size sigs;
+          no_of_sigs =
+            let len = @list_length ByStr20 in
+            len sigs;
           not_enough_signatures = builtin lt no_of_sigs required_signatures;
           match not_enough_signatures with
           | True =>
@@ -327,7 +311,13 @@ transition RevokeSignature (transactionId : Uint32)
       e = mk_error_event not_already_signed_err_code;
       event e
     | True =>
-      new_sigs = builtin remove sigs _sender;
+      new_sigs =
+        let rem = @list_filter ByStr20 in
+        let filter =
+          fun (x : ByStr20) =>
+            let equal = builtin eq x _sender in
+            negb equal in
+        rem filter sigs;
       new_signatures = builtin put sigs_tmp transactionId new_sigs;
       signatures := new_signatures
     end
@@ -351,7 +341,13 @@ transition RevokeOwnerSignature (new_owner : ByStr20)
       e = mk_error_event not_already_signed_err_code;
       event e
     | True =>
-      new_sigs = builtin remove sigs _sender;
+      new_sigs = 
+        let rem = @list_filter ByStr20 in
+        let filter =
+          fun (x : ByStr20) =>
+            let equal = builtin eq x _sender in
+            negb equal in
+        rem filter sigs;
       new_signatures = builtin put sigs_tmp new_owner new_sigs;
       owner_signatures := new_signatures
     end
@@ -365,7 +361,7 @@ transition AddCandidateOwner (candidate : ByStr20)
   checked <- validity_checked;
   match checked with
   | False =>
-    owners_map = mk_owners_map initial_owners;
+    owners_map = initial_owners;
     owners := owners_map;
     valid_contract = check_contract_validity owners_map;
     contract_valid := valid_contract;
@@ -389,15 +385,21 @@ transition AddCandidateOwner (candidate : ByStr20)
       event e
     | None =>
       owners_tmp <- owners;
-      owner_option = builtin get owners_tmp candidate;
+      owner_option =
+        let mem_fn = @list_mem ByStr20 in
+        let pred =
+          fun (m : ByStr20) =>
+          fun (n : ByStr20) =>
+            builtin eq m n in
+        mem_fn pred candidate owners_tmp;
       match owner_option with
-      | Some _ =>
+      | True =>
         (* Candidate is already an owner *)
         e = mk_error_event candidate_already_owner_err_code;
         event e
-      | None =>
+      | False =>
         (* New candidate *)
-        empty_sigs = Emp ByStr20 Bool;
+        empty_sigs = Nil {ByStr20};
         new_owner_signatures = builtin put owner_signatures_tmp candidate empty_sigs;
         owner_signatures := new_owner_signatures
       end
@@ -434,11 +436,13 @@ transition SignOffNewOwner (candidate : ByStr20)
         e = mk_error_event already_signed_err_code;
         event e
       | False =>
-        new_sigs = builtin put sigs _sender t;
+        new_sigs = Cons {ByStr20} _sender sigs;
         new_owner_signatures = builtin put owner_signatures_tmp candidate new_sigs;
         owner_signatures := new_owner_signatures;
         (* Create event with owner id *)
-        no_of_sigs = builtin size new_sigs;
+        no_of_sigs =
+          let size = @list_length ByStr20 in
+          size new_sigs;
         e = mk_owner_signed_event no_of_sigs;
         event e
       end
@@ -458,8 +462,12 @@ transition ClaimOwnership ()
     event e
   | Some sigs => 
     current_owners <- owners;
-    no_of_owners = builtin size current_owners;
-    no_of_sigs = builtin size sigs;
+    no_of_owners =
+      let size = @list_length ByStr20 in
+      size current_owners;
+    no_of_sigs =
+      let size = @list_length ByStr20 in
+      size sigs;
     all_have_signed = uint32_eq no_of_sigs no_of_owners;
     match all_have_signed with
     | False =>
@@ -472,7 +480,7 @@ transition ClaimOwnership ()
       new_owner_signatures = builtin remove owner_signatures_tmp _sender;
       owner_signatures := new_owner_signatures;
       t = True;
-      new_owners = builtin put current_owners _sender t;
+      new_owners = Cons {ByStr20} _sender current_owners;
       owners := new_owners;
       (* Create event with owner id *)
       e = mk_new_owner_approved_event;
@@ -487,7 +495,7 @@ transition AddFunds ()
   checked <- validity_checked;
   match checked with
   | False =>
-    owners_map = mk_owners_map initial_owners;
+    owners_map = initial_owners;
     owners := owners_map;
     valid_contract = check_contract_validity owners_map;
     contract_valid := valid_contract;
