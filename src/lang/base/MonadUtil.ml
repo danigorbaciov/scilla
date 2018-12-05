@@ -96,35 +96,37 @@ module EvalMonad = struct
    * returns a function "(int -> ('a, 'b) eresult", which
    * when executed with "remaining_gas" as the argument
    * produces eresult (with a new value for remaining_gas). *)
-  include Monad.Make2 (struct
+  include Monad.Make3 (struct
 
-      type nonrec ('a, 'b) t = int -> ('a, 'b) eresult
+      type nonrec ('a, 'b, 'c) t = (('a, 'b) eresult -> 'c) -> int -> 'c
 
-      let bind x ~f =
+      let bind x ~f k =
         (fun remaining_gas ->
-           let r = x remaining_gas in
-           match r with
-           | Error _ as x'  -> x'
-           | Ok (z, remaining_gas') -> (f z) remaining_gas'
-        )
+           x (fun r ->
+               match r with
+               | Error _ as x'  -> k @@ x'
+               | Ok (z, remaining_gas') -> (f z) k remaining_gas')
+             remaining_gas)
 
-      let map x ~f =
+      let map x ~f k =
         (fun remaining_gas ->
-           let r = x remaining_gas in
-           match r with
-           | Error _ as x' -> x'
-           | Ok (z, remaining_gas') -> Ok ((f z), remaining_gas'))
+           x (fun r ->
+               match r with
+               | Error _ as x' -> k @@ x'
+               | Ok (z, remaining_gas') ->
+                   k @@ Ok (f z, remaining_gas'))
+          remaining_gas)
 
       let map = `Custom map
 
       (* This does charge any gas. *)
-      let return x = (fun remaining_gas -> Ok (x, remaining_gas))
+      let return x k = (fun remaining_gas -> k @@ Ok (x, remaining_gas))
 
     end)
 
   (* Monadic evaluation results *)
-  let fail (s : scilla_error list) = (fun remaining_gas -> Error (s, remaining_gas))
-  let pure e = return e
+  let fail (s : scilla_error list) k = (fun remaining_gas -> k @@ Error (s, remaining_gas))
+  let pure e k = return e k
 
   (* fail with just a message, no location info. *)
   let fail0 (msg : string) = fail @@ mk_error0 msg
@@ -138,28 +140,31 @@ module EvalMonad = struct
     | Core.Error s -> fail s
     | Core.Ok a -> pure a
 
-  let mapR r remaining_gas =
+  let mapR r remaining_gas k =
     match r with
-    | Core.Error s -> Error (s, remaining_gas)
-    | Core.Ok a -> Ok (a, remaining_gas)
+    | Core.Error s -> k @@ Error (s, remaining_gas)
+    | Core.Ok a -> k @@ Ok (a, remaining_gas)
 
   (* Wrap an op with cost check when op returns "result". *)
-  let checkwrap_opR op_thunk cost =
+  let checkwrap_opR op_thunk cost k =
     (fun remaining_gas ->
        if (remaining_gas >= cost)
-       then 
-         let res = op_thunk() in
-         mapR res (remaining_gas - cost)
-       else 
-         Error (mk_error0 "Ran out of gas", remaining_gas))
+       then
+         op_thunk
+           (fun res ->
+              mapR res (remaining_gas - cost) k)
+       else
+         k @@ Error (mk_error0 "Ran out of gas", remaining_gas))
 
   (* Wrap an op with cost check when op returns "eresult". *)
-  let checkwrap_op op_thunk cost emsg =
+  let checkwrap_op op_thunk cost emsg k =
     (fun remaining_gas ->
        if remaining_gas >= cost then
-         op_thunk() (remaining_gas - cost)
+         op_thunk
+           (fun res ->
+              res k(remaining_gas - cost))
        else
-         Error (emsg, remaining_gas))
+         k @@ Error (emsg, remaining_gas))
 
   open Let_syntax
 
@@ -202,15 +207,19 @@ module EvalMonad = struct
     | [] -> pure true
 
   (* Try all variants in the list, pick the first successful one *)
-  let tryM ~f ls ~msg =
-    let rec doTry ls remaining_cost =
+  let tryM ~f ls ~msg k =
+    let rec doTry ls remaining_cost k =
       match ls with
       | x :: ls' ->
-          (match (f x) remaining_cost  with
-           | Ok (z, remaining_cost') -> Ok ((x, z), remaining_cost')
-           | Error (_, remaining_cost') -> doTry ls' remaining_cost')
+          (f x) remaining_cost
+            (fun res ->
+               match res with
+               | Ok (z, remaining_cost') ->
+                   k @@ Ok ((x, z), remaining_cost')
+               | Error (_, remaining_cost') ->
+                   doTry ls' remaining_cost' k)
       | [] -> Error (msg (), remaining_cost)
     in
-    (fun remaining_cost -> doTry ls remaining_cost)
+    (fun remaining_cost -> doTry ls remaining_cost k)
 
 end (* module EvalMonad *)

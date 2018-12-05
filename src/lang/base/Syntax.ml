@@ -121,7 +121,11 @@ type literal =
   (* A constructor in HNF *)      
   | ADTValue of string * typ list * literal list
   (* An embedded closure *)
-  | Clo of (literal -> int -> (literal, scilla_error list) EvalMonad.eresult)
+  | Clo of (literal
+            -> ((literal, scilla_error list) EvalMonad.eresult
+                -> (literal, scilla_error list) EvalMonad.eresult)
+            -> int
+            -> (literal, scilla_error list) EvalMonad.eresult)
   (* A type abstraction *)
   | TAbs of (typ -> int -> (literal, scilla_error list) EvalMonad.eresult)
 [@@deriving sexp]

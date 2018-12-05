@@ -196,7 +196,7 @@ and try_apply_as_type_closure v arg_type =
 (* Adding gas cost to the reduction *)
 and exp_eval_wrapper expr env =
   let (_, eloc) = expr in
-  let thunk () = exp_eval expr env in
+  let thunk k = k (exp_eval expr env) in
   let%bind cost = fromR @@ EvalGas.expr_static_cost expr in
   let emsg = sprintf "Ran out of gas.\n" in
   (* Add end location too: https://github.com/Zilliqa/scilla/issues/134 *)
