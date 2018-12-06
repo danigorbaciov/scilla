@@ -208,18 +208,19 @@ module EvalMonad = struct
 
   (* Try all variants in the list, pick the first successful one *)
   let tryM ~f ls ~msg k =
-    let rec doTry ls remaining_cost k =
+    let rec doTry ls k remaining_cost =
       match ls with
       | x :: ls' ->
-          (f x) remaining_cost
+          (f x 
             (fun res ->
                match res with
                | Ok (z, remaining_cost') ->
                    k @@ Ok ((x, z), remaining_cost')
                | Error (_, remaining_cost') ->
-                   doTry ls' remaining_cost' k)
+                   doTry ls' k remaining_cost')
+            remaining_cost)
       | [] -> Error (msg (), remaining_cost)
     in
-    (fun remaining_cost -> doTry ls remaining_cost k)
+    (fun remaining_cost -> doTry ls k remaining_cost)
 
 end (* module EvalMonad *)

@@ -53,7 +53,7 @@ let () =
       let elibs = import_all_libs lib_dirs in
       let envres = Eval.init_libraries (Some clib) elibs in
       let env, gas_remaining = 
-        (match envres gas_limit with
+        (match envres Eval.init_kont_lib gas_limit with
         | Ok (env', gas_remaining) -> env', gas_remaining
         | Error (err, gas_remaining) ->
           pout @@ scilla_error_gas_string gas_remaining err;

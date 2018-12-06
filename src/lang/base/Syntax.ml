@@ -127,7 +127,11 @@ type literal =
             -> int
             -> (literal, scilla_error list) EvalMonad.eresult)
   (* A type abstraction *)
-  | TAbs of (typ -> int -> (literal, scilla_error list) EvalMonad.eresult)
+  | TAbs of (typ
+             -> ((literal, scilla_error list) EvalMonad.eresult
+                 -> (literal, scilla_error list) EvalMonad.eresult)
+             -> int
+             -> (literal, scilla_error list) EvalMonad.eresult)
 [@@deriving sexp]
 
 

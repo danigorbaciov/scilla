@@ -201,7 +201,15 @@ and exp_eval_wrapper expr env =
   let emsg = sprintf "Ran out of gas.\n" in
   (* Add end location too: https://github.com/Zilliqa/scilla/issues/134 *)
   checkwrap_op thunk cost (mk_error1 emsg eloc)
-
+  
+let init_kont res =
+  match res with
+  | EvalMonad.Ok ((r, _), g) -> Ok (r, g)
+  | Error _ as err -> err
+    
+(*  (function
+    | EvalMonad.Ok ((r, _), g) -> Ok (r, g)
+    | Error _ as err -> err) *)
 
 open EvalSyntax
 (*******************************************************)
@@ -407,7 +415,7 @@ let create_cur_state_fields initcstate curcstate =
 let literal_list_gas llit =
   mapM ~f:(fun (name, lit) ->
       let%bind c = fromR @@ EvalGas.literal_cost lit in
-      let dummy () = pure () in (* the literal is already created. *)
+      let dummy k = k @@ pure () in (* the literal is already created. *)
       checkwrap_op dummy c (mk_error0("Ran out of gas initializing " ^ name))
     ) llit
 
